@@ -416,6 +416,28 @@ class TestJit(JitTestCase):
 
         ge = self.checkTrace(f, (x, y))
 
+    @unittest.skipIf(IS_WINDOWS, "NYI: fuser support for Windows")
+    @unittest.skipIf(not RUN_CUDA, "fuser requires CUDA")
+    def test_relu(self):
+        def f(x, y):
+            return F.relu(x + .5 * y)
+
+        x = torch.randn(4, 4, dtype=torch.float, device='cuda')
+        y = torch.randn(4, 4, dtype=torch.float, device='cuda')
+
+        ge = self.checkTrace(f, (x, y))
+
+    @unittest.skipIf(IS_WINDOWS, "NYI: fuser support for Windows")
+    @unittest.skipIf(not RUN_CUDA, "fuser requires CUDA")
+    def test_exp(self):
+        def f(x, y):
+            return (x + .5 * y).exp()
+
+        x = torch.randn(4, 4, dtype=torch.float, device='cuda')
+        y = torch.randn(4, 4, dtype=torch.float, device='cuda')
+
+        ge = self.checkTrace(f, (x, y))
+
     # TODO: adapt this test to check that GraphExecutor treats them differently
     @unittest.skip("Need to be adjusted to Graph Executor")
     def test_arg_configurations(self):
@@ -475,6 +497,15 @@ class TestJit(JitTestCase):
         self.run_pass('cse', trace)
         self.assertExpectedGraph(trace)
         self.assertExportImport(trace, (x, y))
+
+    def test_scalar(self):
+        # NB: must not require grad; if it requires grad, it's always a Tensor
+        x = torch.tensor(2.)
+        y = torch.tensor(3.)
+
+        def fn(x, y):
+            return x - y
+        trace, _ = torch.jit.get_trace_graph(fn, (x, y), nderivs=0)
 
     def test_shape_analysis_broadcast(self):
         def broadcast(a, b):
@@ -706,6 +737,8 @@ class TestJit(JitTestCase):
             return torch.sigmoid(torch.tanh(x * (x + y)))
 
         trace, _ = torch.jit.get_trace_graph(doit, (x, y))
+        self.run_pass('dce', trace)
+        self.run_pass('canonicalize', trace)
         g = trace.graph()
         g2 = torch._C.Graph()
         g_to_g2 = {}
@@ -1407,6 +1440,20 @@ class TestScript(JitTestCase):
         inputs = self._make_scalar_vars([1, -1], torch.int64)
         self.checkScript(func, inputs, optimize=True)
 
+    def test_if_for_in_range(self):
+        def func(a, b):
+            d = 3
+            for _ in range(20):
+                if a > 10:
+                    a = 3 + d
+                else:
+                    b = 3 + d
+                    d = 4
+                c = a + b
+            return d
+        inputs = self._make_scalar_vars([1, -1], torch.int64)
+        self.checkScript(func, inputs, optimize=True)
+
     def test_if_noelse(self):
         def func(a, b):
             if a > 10:
@@ -1507,6 +1554,20 @@ class TestScript(JitTestCase):
         inputs = self._make_scalar_vars([0], torch.int64)
 
         self.assertEqual(test_script_for_in_range_ast(*inputs), 161700)
+
+    def test_script_for_in_range_if_ast(self):
+        @torch.jit.script
+        def test_script_for_in_range_if_ast(x):
+            output = 0
+            for i in range(20):
+                if i == 0:
+                    output = x.unsqueeze(0)
+                else:
+                    output = torch.cat((output, x.unsqueeze(0)), dim=0)
+            return output
+        inputs = self._make_scalar_vars([0], torch.int64)
+
+        self.assertEqual(test_script_for_in_range_if_ast(*inputs).shape[0], 20)
 
     def test_script_bool_constant(self):
         script = '''
@@ -3084,6 +3145,263 @@ class TestScript(JitTestCase):
 
         self.checkScript(fn, (torch.randn(3, 2, dtype=torch.float), torch.ones(3, 2, dtype=torch.float)))
 
+    def test_reassign_module_lhs(self):
+        with self.assertRaisesRegex(RuntimeError, 'cannot re-assign \'self\' because it has type '
+                                                  'value. Only reassignments to first-class values are allowed'):
+            class ReassignSelfLHS(torch.jit.ScriptModule):
+                @torch.jit.script_method
+                def forward(self, x):
+                    for i in range(20):
+                        self = x
+                    return self
+
+            ReassignSelfLHS()
+
+    def test_reassign_module_rhs(self):
+        with self.assertRaisesRegex(RuntimeError, 'cannot re-assign \'x\' to a value of type module.'
+                                                  ' Only reassignments to first-class values are allowed'):
+            class ReassignSelfRHS(torch.jit.ScriptModule):
+                @torch.jit.script_method
+                def forward(self, x):
+                    for i in range(20):
+                        x = self
+                    return self
+
+            ReassignSelfRHS()
+
+    def test_chunk_non_constant(self):
+        with self.assertRaisesRegex(RuntimeError, 'argument \'chunks\' must be a constant'):
+            @torch.jit.script
+            def chunk_non_constant(x, y):
+                return x.chunk(y)
+
+    def test_unknown_builtin(self):
+        with self.assertRaisesRegex(RuntimeError, 'unknown builtin op'):
+            @torch.jit.script
+            def unknown_builtin(x):
+                return x.splork(3)
+
+    def test_expected_tensor_found_tuple(self):
+        with self.assertRaisesRegex(RuntimeError, 'expected a tensor value but found a tuple'):
+            @torch.jit.script
+            def return_tuple_wrong(x):
+                a = (x, x)
+                return a, x
+
+    def test_method_no_self(self):
+        with self.assertRaisesRegex(RuntimeError, 'methods must have a self argument'):
+            class MethodNoSelf(torch.jit.ScriptModule):
+                @torch.jit.script_method
+                def forward():
+                    return torch.zeros(3, 4)
+
+            MethodNoSelf()
+
+    def test_return_stmt_not_at_end(self):
+        with self.assertRaisesRegex(RuntimeError, 'return statements can appear only at the end of the function body'):
+            @torch.jit.script
+            def return_stmt_wrong(x):
+                if x > 3:
+                    return 3
+                else:
+                    return x
+
+    def test_for_range_no_arg(self):
+        with self.assertRaisesRegex(RuntimeError, 'range\(\) expects 1 argument but got 0'):
+            @torch.jit.script
+            def range_no_arg(x):
+                for i in range():
+                    x += 1
+                return x
+
+    def test_list_iterables(self):
+        with self.assertRaisesRegex(RuntimeError, 'List of iterables is not supported currently'):
+            cu = torch.jit.CompilationUnit('''
+            def list_iterables(x):
+                for i, j in [2, 3, 4], [5, 6, 7]:
+                    x += i
+                    x += j
+                return x
+            ''')
+
+    def test_for_tuple_unpack(self):
+        with self.assertRaisesRegex(RuntimeError, 'Iteration variable unpacking is not supported'):
+            cu = torch.jit.CompilationUnit('''
+            def for_tuple_unpack(x, y):
+                for i, j in [[3, 4], [5, 6], [7, 8]]:
+                    x += i
+                    y += j
+                return x, y
+            ''')
+
+    def test_single_starred_lhs(self):
+        with self.assertRaisesRegex(RuntimeError, 'A Starred expression may only appear on the lhs within the presence'
+                                                  ' of another non-starred expression'):
+            cu = torch.jit.CompilationUnit('''
+            def single_starred_lhs(x):
+                a = (x, x, x)
+                *b = a
+                return b
+            ''')
+
+    def test_multi_reduction(self):
+        with self.assertRaisesRegex(RuntimeError, 'reductions are only allowed when there is a single variable on'
+                                                  ' the left-hand side'):
+            cu = torch.jit.CompilationUnit('''
+            def multi_reduction(x):
+                a, b += x
+                return a, b
+            ''')
+
+    def test_invalid_call_arguments(self):
+        with self.assertRaisesRegex(RuntimeError, 'arguments for call are not valid'):
+            @torch.jit.script
+            def invalid_call_arguments(x):
+                return torch.unsqueeze(3, 4, 5, 6, 7, 8)
+
+    def test_invalid_lhs_assignment(self):
+        with self.assertRaisesRegex(RuntimeError, 'lhs of assignment must be a variable or starred expression'):
+            cu = torch.jit.CompilationUnit('''
+            def invalid_lhs_assignment(x):
+                x + 1 = x
+                return x
+            ''')
+
+    def test_multi_starred_expr_lhs(self):
+        with self.assertRaisesRegex(RuntimeError, 'Only one starred expression is allowed on the lhs'):
+            cu = torch.jit.CompilationUnit('''
+            def multi_starred_expr_lhs():
+                a, *b, *c = [1, 2, 3, 4, 5, 6]
+                return a
+            ''')
+
+    def test_pack_tuple_into_non_var(self):
+        with self.assertRaisesRegex(RuntimeError, 'Cannot pack a tuple into a non-variable'):
+            cu = torch.jit.CompilationUnit('''
+            def pack_tuple_into_non_var(x):
+                a, *1 = (3, 4, 5)
+                return x
+            ''')
+
+    def test_print_kwargs(self):
+        with self.assertRaisesRegex(RuntimeError, 'print doesn\'t accept any keyword arguments'):
+            cu = torch.jit.CompilationUnit('''
+            def print_kwargs(x):
+                print(x, flush=True)
+                return x
+            ''')
+
+    def test_builtin_use_as_value(self):
+        with self.assertRaisesRegex(RuntimeError, 'builtin cannot be used as a value'):
+            @torch.jit.script
+            def builtin_use_as_value(x):
+                return x.unsqueeze
+
+    def test_wrong_use_as_tuple(self):
+        with self.assertRaisesRegex(RuntimeError, 'cannot be used as a tuple'):
+            def test_fn():
+                return 3
+
+            @torch.jit.script
+            def wrong_use_as_tuple(self):
+                a, b = test_fn
+                return a
+
+    def test_wrong_attr_lookup(self):
+        with self.assertRaisesRegex(RuntimeError, 'attribute lookup is not defined on builtin'):
+            @torch.jit.script
+            def wrong_attr_lookup(self, x):
+                a = x.unsqueeze.myattr
+                return a
+
+    def test_wrong_use_as_callable(self):
+        with self.assertRaisesRegex(RuntimeError, 'cannot call a value'):
+            @torch.jit.script
+            def wrong_use_as_callable(x):
+                return x(3, 4, 5)
+
+    def test_wrong_python_kwarg_call(self):
+        with self.assertRaisesRegex(RuntimeError, 'keyword arguments in Python calls aren\'t supported'):
+            # NB: the only way I could get to this code path is if I made the
+            # python function have 0 inputs, since we interpret all the inputs to
+            # the function as inputs (including those with defaults) and not kwargs
+            def test_fn():
+                return 3
+
+            @torch.jit.script
+            def wrong_python_kwarg_call(self):
+                return test_fn(attr=6)
+
+    def test_python_val_doesnt_have_attr(self):
+        with self.assertRaisesRegex(RuntimeError, 'object has no attribute abcd'):
+            def test_fn():
+                return 3
+
+            @torch.jit.script
+            def python_val_doesnt_have_attr():
+                return test_fn.abcd
+
+    def test_wrong_module_attr_lookup(self):
+        with self.assertRaisesRegex(RuntimeError, 'unsupported attribute lookup on'):
+            import io
+
+            @torch.jit.script
+            def wrong_module_attr_lookup():
+                return io.BytesIO
+
+    def test_wrong_method_call_inputs(self):
+        with self.assertRaisesRegex(RuntimeError, 'argument \'y\' not provided'):
+            class SomeModule(torch.jit.ScriptModule):
+
+                @torch.jit.script_method
+                def foo(self, x, y):
+                    return x
+
+                @torch.jit.script_method
+                def forward(self, x, y):
+                    return self.foo(x)
+            SomeModule()
+
+    def test_single_starred_expr_for_loop(self):
+        with self.assertRaisesRegex(RuntimeError, 'Starred unpacking is currently not supported for for loops'):
+            cu = torch.jit.CompilationUnit('''
+            def test():
+                x = 0
+                for *a in [1, 2, 3]:
+                    x = x + 1
+                return x
+            ''')
+
+    def test_duplicate(self):
+        with self.assertRaisesRegex(RuntimeError, 'Method \'test\' already defined'):
+            cu = torch.jit.CompilationUnit('''
+            def test():
+                return 1
+
+            def test():
+                return 2
+            ''')
+
+    def test_call_ge(self):
+        with self.assertRaisesRegex(RuntimeError, 'expected 1 arguments but found 3'):
+            @torch.jit.trace(torch.zeros(1, 2, 3))
+            def foo(x):
+                return x
+
+            @torch.jit.script
+            def test_fn():
+                return foo(1, 2, 3)
+
+    def test_wrong_return_type(self):
+        with self.assertRaisesRegex(RuntimeError, 'Python functions can currently only return Tensors'):
+            def somefunc():
+                # type: () -> Tuple[Tuple[Tensor, Tensor]]
+                return torch.zeros(3, 4), torch.zeros(4, 5)
+
+            @torch.jit.script
+            def wrong_return_type():
+                return somefunc()
+
 
 class TestEndToEndHybridFrontendModels(JitTestCase):
 
@@ -3539,9 +3857,6 @@ EXCLUDE_TRACED = {
     'test___getitem___adv_index_var',
     'test_add_scalar',
     'test_add_scalar_constant',
-    'test_addmm_broadcast_lhs_coef',
-    'test_addmm_coef',
-    'test_addmm_scalar_broadcast_lhs_coef',
     'test_expand_scalar_to_scalar',
     'test_index_add_dim',
     'test_index_add_dim_neg0',
@@ -3605,18 +3920,6 @@ EXCLUDE_SCRIPT = {
     'test_add_scalar',
     'test_add_scalar_broadcast_lhs',
     'test_add_scalar_broadcast_rhs',
-    'test_addcdiv_scalar_scale',
-    'test_addcdiv_scalar_scale_broadcast_lhs',
-    'test_addcdiv_scalar_scale_broadcast_rhs',
-    'test_addcdiv_scale',
-    'test_addcdiv_scale_broadcast_all',
-    'test_addcdiv_scale_broadcast_rhs',
-    'test_addcmul_scalar_scale',
-    'test_addcmul_scalar_scale_broadcast_lhs',
-    'test_addcmul_scalar_scale_broadcast_rhs',
-    'test_addcmul_scale',
-    'test_addcmul_scale_broadcast_all',
-    'test_addcmul_scale_broadcast_rhs',
     'test_clamp_max',
     'test_clamp_max_scalar',
     'test_clamp_min',
@@ -3649,20 +3952,9 @@ EXCLUDE_SCRIPT = {
     'test_sub_scalar_constant',
     'test_unsqueeze_last_neg0',
     'test_unsqueeze_middle_neg0',
-    'test_addbmm_broadcast_lhs_coef',
-    'test_addbmm_coef',
-    'test_addbmm_scalar_broadcast_lhs_coef',
     'test_addmm_broadcast_lhs_coef',
     'test_addmm_coef',
     'test_addmm_scalar_broadcast_lhs_coef',
-    'test_addmv_broadcast_lhs_coef',
-    'test_addmv_coef',
-    'test_addmv_scalar_broadcast_lhs_coef',
-    'test_addr_broadcast_lhs_coef',
-    'test_addr_coef',
-    'test_baddbmm_broadcast_lhs_coef',
-    'test_baddbmm_coef',
-    'test_baddbmm_scalar_broadcast_lhs_coef',
     'test_expand',
     'test_expand_1_element',
     'test_expand_new_dim',
@@ -3735,34 +4027,34 @@ EXCLUDE_SCRIPT = {
     'test_view_scalar_to_1d',
     'test_view_scalar_to_scalar',
     'test_view_size',
-    'test_where',
-    'test_where_broadcast_all',
-    'test_where_scalar',
-    'test_where_scalar_broadcast_mask',
-    'test_where_scalar_broadcast_non_mask',
     'test_split_dim',
     'test_split_dim_neg0',
     'test_gesv',
     'test_inverse',
+    'test_pow_scalar_constant',
+    'test_pow_constant',
+    'test_mul_constant',
+    'test_div_scalar_constant',
+    'test_div_constant',
 }
 
 
 # make a new function where all non-tensor arguments in 'args' have been partially
 # applied, and all tensor arguments remain.
 # used to trace functions when some arguments are not tensors
-def partial_apply_nontensors(fn, args):
+def partial_apply_nontensors(fn, args, **kwargs):
     source = ['t' if isinstance(arg, torch.Tensor) else 's' for arg in args]
 
     def new_fn(*tensors_):
         tensors = iter(tensors_)
-        return fn(*(args[i] if s == 's' else next(tensors) for i, s in enumerate(source)))
+        return fn(*(args[i] if s == 's' else next(tensors) for i, s in enumerate(source)), **kwargs)
 
     return new_fn, [arg for arg in args if isinstance(arg, torch.Tensor)]
 
 
 def create_traced_fn(fn):
-    def traced_fn(*inputs):
-        fn_tensors, inputs_tensors = partial_apply_nontensors(fn, inputs)
+    def traced_fn(*inputs, **kwargs):
+        fn_tensors, inputs_tensors = partial_apply_nontensors(fn, inputs, **kwargs)
         traced = torch.jit.trace(*inputs_tensors)(fn_tensors)
         return traced(*inputs_tensors)
     return traced_fn
@@ -3774,7 +4066,7 @@ def the_method({}):
 
 
 def create_script_fn(method_name, is_functional, output_process_fn):
-    def script_fn(*args):
+    def script_fn(*args, **kwargs):
         formals = []
         tensors = []
         actuals = []
@@ -3786,17 +4078,22 @@ def create_script_fn(method_name, is_functional, output_process_fn):
                 tensors.append(arg)
             else:
                 actuals.append(str(arg))
+        kwargs_str = ''
+        for k, v in kwargs.items():
+            kwargs_str += ', ' + k + '=' + str(v)
         if is_functional:
-            call = 'torch.{}({})'.format(method_name, ', '.join(actuals))
+            call = 'torch.{}({}{})'.format(method_name, ', '.join(actuals), kwargs_str)
         else:
-            call = '{}.{}({})'.format(actuals[0], method_name, ', '.join(actuals[1:]))
+            call = '{}.{}({}{})'.format(actuals[0], method_name, ', '.join(actuals[1:]), kwargs_str)
         script = script_template.format(', '.join(formals), call)
         CU = torch.jit.CompilationUnit(script)
         return output_process_fn(CU.the_method(*tensors))
     return script_fn
 
 
-def check_against_reference(self, func, reference_func, args, allow_unused=True):
+def check_against_reference(self, func, reference_func, args, kwargs=None, allow_unused=True):
+    kwargs = kwargs if kwargs else {}
+
     def allSum(vs):
         if isinstance(vs, torch.Tensor):
             vs = (vs,)
@@ -3815,16 +4112,16 @@ def check_against_reference(self, func, reference_func, args, allow_unused=True)
     recording_inputs, recording_tensors = clone_inputs(True)
 
     # test no gradients case
-    outputs = reference_func(*nograd_inputs)
-    outputs_test = func(*nograd_inputs)
+    outputs = reference_func(*nograd_inputs, **kwargs)
+    outputs_test = func(*nograd_inputs, **kwargs)
     self.assertEqual(outputs, outputs_test)
 
     # test single grad case
-    outputs = reference_func(*recording_inputs)
+    outputs = reference_func(*recording_inputs, **kwargs)
     grads = torch.autograd.grad(allSum(outputs), recording_tensors,
                                 allow_unused=allow_unused)
 
-    outputs_test = func(*recording_inputs)
+    outputs_test = func(*recording_inputs, **kwargs)
     grads_test = torch.autograd.grad(allSum(outputs_test), recording_tensors,
                                      allow_unused=allow_unused)
     self.assertEqual(outputs, outputs_test)
@@ -3832,7 +4129,7 @@ def check_against_reference(self, func, reference_func, args, allow_unused=True)
 
     # test the grad grad case
 
-    outputs = reference_func(*recording_inputs)
+    outputs = reference_func(*recording_inputs, **kwargs)
     l1 = allSum(outputs)
     grads = torch.autograd.grad(l1, recording_tensors, create_graph=True,
                                 allow_unused=allow_unused)
@@ -3841,7 +4138,7 @@ def check_against_reference(self, func, reference_func, args, allow_unused=True)
 
     recording_inputs, recording_tensors = clone_inputs(True)
 
-    outputs_test = func(*recording_inputs)
+    outputs_test = func(*recording_inputs, **kwargs)
     l1_test = allSum(outputs_test)
     grads_test = torch.autograd.grad(
         l1_test, recording_tensors, create_graph=True, allow_unused=allow_unused)
@@ -3867,7 +4164,8 @@ def add_test(
         variant_name='',
         dim_args_idx=(),
         skipTestIf=(),
-        output_process_fn=lambda x: x):
+        output_process_fn=lambda x: x,
+        kwargs=None):
     basic_test_name = 'test_' + name
     if variant_name != '':
         basic_test_name += '_' + variant_name
@@ -3885,45 +4183,46 @@ def add_test(
             def check(name):
                 is_magic_method = name[:2] == '__' and name[-2:] == '__'
                 is_inplace = name[-1] == "_" and not is_magic_method
-                self_variable = create_input((self_size,))[0]
+                self_variable = create_input((self_size,))[0][0]
                 # FixMe: run grad checks on inplace self
                 if is_inplace:
                     self_variable.requires_grad = False
                 # need to record this because methods can change the szie (e.g. unsqueeze)
-                args_variable = create_input(args, requires_grad=not is_inplace)
+                args_variable, kwargs_variable = create_input(args, requires_grad=not is_inplace, call_kwargs=kwargs)
                 self_tensor = deepcopy(self_variable.data)
                 args_tensor = deepcopy(unpack_variables(args_variable))
-                output_variable = getattr(self_variable, name)(*args_variable)
+                output_variable = getattr(self_variable, name)(*args_variable, **kwargs_variable)
 
-                def fn(*inputs):
-                    output = getattr(inputs[0], name)(*inputs[1:])
+                def fn(*inputs, **kwargs):
+                    output = getattr(inputs[0], name)(*inputs[1:], **kwargs)
                     return output_process_fn(output)
 
-                if not is_inplace and name not in EXCLUDE_GRADCHECK:
+                if not is_inplace and name not in EXCLUDE_GRADCHECK and not exclude_tensor_method(name, test_name):
                     if test_name not in EXCLUDE_TRACED:
-                        check_against_reference(self, create_traced_fn(fn), fn, (self_variable,) + args_variable)
+                        check_against_reference(self, create_traced_fn(fn),
+                                                fn, (self_variable,) + args_variable, kwargs_variable)
 
                     if not is_magic_method and test_name not in EXCLUDE_SCRIPT:
                         check_against_reference(self,
                                                 create_script_fn(name, False, output_process_fn),
-                                                fn, (self_variable,) + args_variable)
+                                                fn, (self_variable,) + args_variable, kwargs_variable)
 
                 # functional interface tests
                 if hasattr(torch, name) and name not in EXCLUDE_FUNCTIONAL:
-                    def fn(*inputs):
-                        output = getattr(torch, name)(*inputs)
+                    def fn(*inputs, **kwargs):
+                        output = getattr(torch, name)(*inputs, **kwargs)
                         return output_process_fn(output)
 
                     f_args_variable = (self_variable,) + args_variable
                     f_args_tensor = (self_tensor,) + args_tensor
 
                     if not is_inplace and test_name not in EXCLUDE_TRACED:
-                        check_against_reference(self, create_traced_fn(fn), fn, f_args_variable)
+                        check_against_reference(self, create_traced_fn(fn), fn, f_args_variable, kwargs_variable)
 
                     if not is_inplace and test_name not in EXCLUDE_SCRIPT:
                         check_against_reference(self,
                                                 create_script_fn(name, True, output_process_fn),
-                                                fn, f_args_variable)
+                                                fn, f_args_variable, kwargs_variable)
 
             check(name)
             inplace_name = name + '_'

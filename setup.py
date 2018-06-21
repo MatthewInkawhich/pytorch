@@ -113,6 +113,7 @@ from tools.setup_helpers.env import check_env_flag, check_negative_env_flag
 config_env_vars = ['CUDA', 'CUDNN', 'MKLDNN', 'NNPACK', 'DISTRIBUTED', 'DISTRIBUTED_MW',
                    'SYSTEM_NCCL', 'GLOO_IBVERBS']
 
+
 def hotpatch_var(var):
     if check_env_flag('NO_' + var):
         os.environ['USE_' + var] = '0'
@@ -354,7 +355,6 @@ class build_deps(PytorchCommand):
         check_file(os.path.join(third_party_path, "nanopb", "CMakeLists.txt"))
         check_file(os.path.join(third_party_path, "pybind11", "CMakeLists.txt"))
         check_file(os.path.join(third_party_path, 'cpuinfo', 'CMakeLists.txt'))
-        check_file(os.path.join(third_party_path, 'tbb', 'Makefile'))
         check_file(os.path.join(third_party_path, 'catch', 'CMakeLists.txt'))
         check_file(os.path.join(third_party_path, 'onnx', 'CMakeLists.txt'))
 
@@ -379,8 +379,8 @@ class build_deps(PytorchCommand):
 
         # Use copies instead of symbolic files.
         # Windows has very poor support for them.
-        sym_files = ['tools/shared/cwrap_common.py']
-        orig_files = ['aten/src/ATen/common_with_cwrap.py']
+        sym_files = ['tools/shared/cwrap_common.py', 'tools/shared/_utils_internal.py']
+        orig_files = ['aten/src/ATen/common_with_cwrap.py', 'torch/_utils_internal.py']
         for sym_file, orig_file in zip(sym_files, orig_files):
             if os.path.exists(sym_file):
                 os.remove(sym_file)
@@ -672,7 +672,6 @@ if USE_ROCM:
 THD_LIB = os.path.join(lib_path, 'libTHD.a')
 NCCL_LIB = os.path.join(lib_path, 'libnccl.so.1')
 C10D_LIB = os.path.join(lib_path, 'libc10d.a')
-C10D_GLOO_LIB = os.path.join(lib_path, 'libc10d_gloo.a')
 
 # static library only
 NANOPB_STATIC_LIB = os.path.join(lib_path, 'libprotobuf-nanopb.a')
@@ -728,7 +727,6 @@ main_sources = [
     "torch/csrc/torch.cpp",
     "torch/csrc/utils.cpp",
     "torch/csrc/utils/cuda_lazy_init.cpp",
-    "torch/csrc/utils/device.cpp",
     "torch/csrc/utils/invalid_arguments.cpp",
     "torch/csrc/utils/object_ptr.cpp",
     "torch/csrc/utils/python_arg_parser.cpp",
@@ -848,7 +846,7 @@ if USE_DISTRIBUTED:
 if USE_C10D:
     extra_compile_args += ['-DUSE_C10D']
     main_sources += ['torch/csrc/distributed/c10d/init.cpp']
-    main_link_args += [C10D_GLOO_LIB, C10D_LIB]
+    main_link_args += [C10D_LIB]
 
 if USE_CUDA:
     nvtoolext_lib_name = None

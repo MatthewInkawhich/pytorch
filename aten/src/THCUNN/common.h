@@ -21,7 +21,7 @@ inline int GET_BLOCKS(const int N)
   THLongStorage *size2 = THCTensor_(newSizeOf)(STATE, I2);  \
   if (!THCIndexTensor_(isSize)(STATE, I1, size2))           \
   { \
-    THCudaLongTensor_resizeLegacy(STATE, I1, size2, NULL);        \
+    THCudaLongTensor_resize(STATE, I1, size2, NULL);        \
   } \
   THLongStorage_free(size2);
 
@@ -61,7 +61,7 @@ inline int GET_BLOCKS(const int N)
   }
 
 #define THCUNN_check_dim_size(STATE, T, DIM, DIM_SIZE, SIZE) \
-  if (THCTensor_(nDimension)(STATE, T) != DIM ||             \
+  if (THCTensor_(_nDimension)(STATE, T) != DIM ||             \
       THCTensor_(size)(STATE, T, DIM_SIZE) != SIZE) {        \
       THCDescBuff s1 = THCTensor_(sizeDesc)(state, T);       \
       THError("Need " #T " of dimension %d and " #T ".size[%d] == %d"	\
@@ -69,7 +69,7 @@ inline int GET_BLOCKS(const int N)
   }
 
 #define THCUNN_check_dim_size_indices(STATE, T, DIM, DIM_SIZE, SIZE)  \
-  if (THCIndexTensor_(nDimension)(STATE, T) != DIM ||                 \
+  if (THCIndexTensor_(_nDimension)(STATE, T) != DIM ||                 \
       THCIndexTensor_(size)(STATE, T, DIM_SIZE) != SIZE) {            \
       THCDescBuff s1 = THCIndexTensor_(sizeDesc)(state, T);           \
       THError("Need " #T " of dimension %d and " #T ".size[%d] == %d" \
