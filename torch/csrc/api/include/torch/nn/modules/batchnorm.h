@@ -19,6 +19,9 @@ struct BatchNormOptions {
 
 class BatchNormImpl : public torch::nn::Cloneable<BatchNormImpl> {
  public:
+  template <typename... Ts>
+  explicit BatchNormImpl(Ts&&... ts)
+      : BatchNormImpl(BatchNormOptions(std::forward<Ts>(ts)...)) {}
   explicit BatchNormImpl(BatchNormOptions options);
 
   void reset() override;
@@ -26,14 +29,11 @@ class BatchNormImpl : public torch::nn::Cloneable<BatchNormImpl> {
   Tensor forward(Tensor input);
   Tensor pure_forward(Tensor input, Tensor mean, Tensor variance);
 
-  const BatchNormOptions& options() const noexcept;
-
- private:
-  BatchNormOptions options_;
-  Tensor weight_;
-  Tensor bias_;
-  Tensor running_mean_;
-  Tensor running_variance_;
+  BatchNormOptions options;
+  Tensor weight;
+  Tensor bias;
+  Tensor running_mean;
+  Tensor running_variance;
 };
 
 TORCH_MODULE(BatchNorm);

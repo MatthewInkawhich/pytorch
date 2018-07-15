@@ -32,15 +32,16 @@ struct ConvOptions {
 template <size_t D, typename Derived>
 class ConvImpl : public torch::nn::Cloneable<Derived> {
  public:
+  template <typename... Ts>
+  explicit ConvImpl(Ts&&... ts)
+      : ConvImpl(ConvOptions<D>(std::forward<Ts>(ts)...)) {}
   explicit ConvImpl(ConvOptions<D> options);
 
   void reset() override;
-  const ConvOptions<D>& options() const noexcept;
 
- protected:
-  Tensor weight_;
-  Tensor bias_;
-  ConvOptions<D> options_;
+  ConvOptions<D> options;
+  Tensor weight;
+  Tensor bias;
 };
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Conv1d ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

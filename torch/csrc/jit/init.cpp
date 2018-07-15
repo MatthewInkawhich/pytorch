@@ -18,12 +18,13 @@
 #include "torch/csrc/jit/passes/shape_analysis.h"
 #include "torch/csrc/jit/passes/decompose_addmm.h"
 #include "torch/csrc/jit/passes/loop_unrolling.h"
+#include "torch/csrc/jit/passes/to_batch.h"
+#include "torch/csrc/jit/passes/specialize_undef.h"
 #include "torch/csrc/jit/graph_executor.h"
 #include "torch/csrc/jit/script/init.h"
 #include "torch/csrc/jit/script/python_tree_views.h"
-#include "torch/csrc/jit/python_interpreter.h"
+#include "torch/csrc/jit/batched/BatchTensor.h"
 #include "torch/csrc/jit/pybind_utils.h"
-
 
 namespace torch  { namespace jit {
 
@@ -86,6 +87,7 @@ void initJITBindings(PyObject *module) {
    .def("_jit_pass_onnx_block", BlockToONNX)
    .def("_jit_pass_fixup_onnx_loops", FixupONNXLoops)
    .def("_jit_pass_decompose_addmm", DecomposeAddmm)
+    .def("_jit_pass_specialize_undef", specializeUndef)
    .def("_jit_differentiate", [](Graph &g, const std::vector<bool>& requires_grad) {
        // the python binding slightly differs in semantics
        // it makes a copy of the input Graph, and works on that
@@ -122,6 +124,9 @@ void initJITBindings(PyObject *module) {
     })
     .def_property_readonly("df", [](Gradient& m) {
       return m.df;
+    })
+    .def_property_readonly("f_real_outputs", [](Gradient& m) {
+      return m.f_real_outputs;
     })
     .def_property_readonly("df_input_vjps", [](Gradient& m) {
       return m.df_input_vjps;
@@ -200,7 +205,8 @@ void initJITBindings(PyObject *module) {
   tracer::initPythonTracerBindings(module);
   script::initTreeViewBindings(module);
   script::initJitScriptBindings(module);
-  registerPythonInterpreterOps();
+  initBatchTensorBindings(module);
+  initRegisterBatchOpsBindings(module);
 }
 
 }}

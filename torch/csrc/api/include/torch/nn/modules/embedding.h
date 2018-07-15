@@ -18,15 +18,16 @@ struct EmbeddingOptions {
 
 class EmbeddingImpl : public torch::nn::Cloneable<EmbeddingImpl> {
  public:
+  template <typename... Ts>
+  explicit EmbeddingImpl(Ts&&... ts)
+      : EmbeddingImpl(EmbeddingOptions(std::forward<Ts>(ts)...)) {}
   explicit EmbeddingImpl(EmbeddingOptions options);
 
   void reset() override;
   Tensor forward(Tensor);
-  const EmbeddingOptions& options() const noexcept;
 
- private:
-  EmbeddingOptions options_;
-  Tensor table_;
+  EmbeddingOptions options;
+  Tensor table;
 };
 
 TORCH_MODULE(Embedding);

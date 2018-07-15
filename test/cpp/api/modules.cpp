@@ -16,22 +16,20 @@ using namespace torch::nn;
 
 class TestModel : public torch::nn::Module {
  public:
-  TestModel() {
-    l1 = register_module("l1", Linear(10, 3));
-    l2 = register_module("l2", Linear(3, 5));
-    l3 = register_module("l3", Linear(5, 100));
-  }
+  TestModel()
+      : l1(register_module("l1", Linear(10, 3))),
+        l2(register_module("l2", Linear(3, 5))),
+        l3(register_module("l3", Linear(5, 100))) {}
 
   Linear l1, l2, l3;
 };
 
 class NestedModel : public torch::nn::Module {
  public:
-  NestedModel() {
-    l1 = register_module("l1", Linear(5, 20));
-    t = register_module("test", std::make_shared<TestModel>());
-    param_ = register_parameter("param", torch::empty({3, 2, 21}));
-  }
+  NestedModel()
+      : l1(register_module("l1", Linear(5, 20))),
+        t(register_module("test", std::make_shared<TestModel>())),
+        param_(register_parameter("param", torch::empty({3, 2, 21}))) {}
 
   torch::Tensor param_;
   Linear l1;
@@ -243,7 +241,7 @@ TEST_CASE("modules_cuda", "[cuda]") {
   torch::manual_seed(0);
   SECTION("1") {
     Linear model(5, 2);
-    model->cuda();
+    model->to(torch::kCUDA);
     auto x =
         torch::randn({10, 5}, torch::device(torch::kCUDA).requires_grad(true));
     auto y = model->forward(x);
@@ -260,8 +258,8 @@ TEST_CASE("modules_cuda", "[cuda]") {
 
   SECTION("2") {
     Linear model(5, 2);
-    model->cuda();
-    model->cpu();
+    model->to(torch::kCUDA);
+    model->to(torch::kCPU);
     auto x = torch::randn({10, 5}, torch::requires_grad());
     auto y = model->forward(x);
     torch::Tensor s = y.sum();

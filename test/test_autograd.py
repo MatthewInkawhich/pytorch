@@ -1284,6 +1284,13 @@ class TestAutograd(TestCase):
         self.assertEqual(y.grad.data, grad[1])
         self.assertEqual(z.grad.data, grad[2])
 
+    def test_unbind(self):
+        stacked = torch.randn(3, 10, 10, requires_grad=True)
+        x, y, z = stacked.unbind()
+        grad = torch.randn(3, 10, 10)
+        torch.autograd.backward([x, y, z], grad.unbind())
+        self.assertEqual(stacked.grad.data, grad)
+
     def test_put(self):
         root = torch.randn(4, 5, requires_grad=True)
         values = torch.randn(6, requires_grad=True)
@@ -2030,6 +2037,39 @@ class TestAutograd(TestCase):
         run_test((10,), 1)
         run_test((10,), 1.5)
 
+    def test_pow_zero_tensor_gradient(self):
+        def run_test(input_size, exponent):
+            input = torch.zeros(*input_size, requires_grad=True)
+            input.pow(exponent).sum().backward()
+            self.assertEqual(input.grad.data.abs().sum(), 0)
+
+        run_test((10,), torch.zeros(10))
+        run_test((10, 10), torch.zeros(10, 10))
+        run_test((10,), 0)
+
+    def test_pinverse(self):
+        # Why is pinverse tested this way, and not ordinarily as other linear algebra methods?
+        # 1. Pseudo-inverses are not generally continuous, which means that they are not differentiable
+        # 2. Derivatives for pseudo-inverses exist typically for constant rank (Golub et al, 1973)
+        # 3. This method creates two orthogonal matrices, and a constructs a test case with large
+        #    singular values (given by x to the function).
+        # 4. This will ensure that small perturbations don't affect the rank of matrix, in which case
+        #    a derivative exists.
+        # 5. This test exists since pinverse is implemented using SVD, and is hence a backpropable method
+        m, n = 5, 10
+        U = torch.randn(n, m).qr()[0].t()  # Orthogonal with dimensions m x n
+        V = torch.randn(n, m).qr()[0].t()  # Orthogonal with dimensions m x n
+
+        def func(x):
+            S = torch.cat([x, torch.zeros(n - m)], 0)
+            M = U.mm(torch.diag(S)).mm(V.t())
+            return M.pinverse()
+
+        gradcheck(func, [torch.rand(m).add_(1).requires_grad_()])
+        gradcheck(func, [torch.rand(m).add_(10).requires_grad_()])
+        gradgradcheck(func, [torch.rand(m).add_(1).requires_grad_()])
+        gradgradcheck(func, [torch.rand(m).add_(10).requires_grad_()])
+
     def test_profiler(self):
         x = torch.randn(10, 10)
 
@@ -2600,6 +2640,8 @@ method_tests = [
     ('expm1', (), NO_ARGS, 'scalar'),
     ('erf', torch.rand(S, S, S), NO_ARGS),
     ('erf', uniform_scalar(requires_grad=True), NO_ARGS, 'scalar'),
+    ('erfc', torch.rand(S, S, S), NO_ARGS),
+    ('erfc', uniform_scalar(requires_grad=True), NO_ARGS, 'scalar'),
     ('erfinv', torch.rand(S, S, S).clamp(-0.9, 0.9), NO_ARGS),
     ('erfinv', normal_scalar_clamp(-0.9, 0.9, requires_grad=True), NO_ARGS, 'scalar'),
     ('log', torch.rand(S, S, S) + 1e-2, NO_ARGS),
@@ -3035,6 +3077,7 @@ method_tests = [
     ('permute', (1, 2, 3, 4), (0, -2, -1, 1), 'neg_dim'),
     ('permute', (), (dont_convert(()),), 'scalar'),
     ('select', (S, S, S), (1, 2), 'dim', [0]),
+    ('select', (S, S, S), (1, -1), 'wrap_dim', [0]),
     ('select', (S,), (0, 2), '1d'),
     ('narrow', (S, S, S), (1, 2, 2), 'dim', [0]),
     ('narrow', (S, S, S), (1, 0, 0), 'empty_dim', [0], [skipIfNoZeroSize]),

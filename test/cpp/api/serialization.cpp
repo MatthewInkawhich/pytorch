@@ -21,8 +21,8 @@
 using namespace torch::nn;
 
 namespace {
-std::shared_ptr<Sequential> xor_model() {
-  return std::make_shared<Sequential>(
+Sequential xor_model() {
+  return Sequential(
       Linear(2, 8),
       Functional(at::sigmoid),
       Linear(8, 1),
@@ -174,7 +174,7 @@ TEST_CASE("serialization") {
 
   SECTION("xor") {
     // We better be able to save and load a XOR model!
-    auto getLoss = [](std::shared_ptr<Sequential> model, uint32_t batch_size) {
+    auto getLoss = [](Sequential model, uint32_t batch_size) {
       auto inputs = torch::empty({batch_size, 2});
       auto labels = torch::empty({batch_size});
       for (size_t i = 0; i < batch_size; i++) {
@@ -279,7 +279,7 @@ TEST_CASE("serialization") {
 TEST_CASE("serialization_cuda", "[cuda]") {
   torch::manual_seed(0);
   // We better be able to save and load a XOR model!
-  auto getLoss = [](std::shared_ptr<Sequential> model, uint32_t batch_size) {
+  auto getLoss = [](Sequential model, uint32_t batch_size) {
     auto inputs = torch::empty({batch_size, 2});
     auto labels = torch::empty({batch_size});
     for (size_t i = 0; i < batch_size; i++) {
@@ -318,7 +318,7 @@ TEST_CASE("serialization_cuda", "[cuda]") {
   auto loss = getLoss(model2, 100);
   REQUIRE(loss.toCFloat() < 0.1);
 
-  model2->cuda();
+  model2->to(torch::kCUDA);
   ss.clear();
   torch::save(ss, model2);
   torch::load(ss, model3);

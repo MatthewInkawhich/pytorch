@@ -176,6 +176,7 @@ In-place version of :meth:`~Tensor.acos`
 add_docstr_all('add',
                r"""
 add(value) -> Tensor
+add(value=1, other) -> Tensor
 
 See :func:`torch.add`
 """)
@@ -183,6 +184,7 @@ See :func:`torch.add`
 add_docstr_all('add_',
                r"""
 add_(value) -> Tensor
+add_(value=1, other) -> Tensor
 
 In-place version of :meth:`~Tensor.add`
 """)
@@ -713,6 +715,13 @@ add_docstr_all('erf',
 erf() -> Tensor
 
 See :func:`torch.erf`
+""")
+
+add_docstr_all('erfc',
+               r"""
+erf() -> Tensor
+
+See :func:`torch.erfc`
 """)
 
 add_docstr_all('erfinv',
@@ -2519,4 +2528,18 @@ add_docstr_all('slogdet',
 slogdet() -> (Tensor, Tensor)
 
 See :func:`torch.slogdet`
+""")
+
+add_docstr_all('unbind',
+               r"""
+unbind(dim=0) -> seq
+
+See :func:`torch.unbind`
+""")
+
+add_docstr_all('pinverse',
+               r"""
+pinverse() -> Tensor
+
+See :func:`torch.pinverse`
 """)
