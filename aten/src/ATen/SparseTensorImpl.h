@@ -2,10 +2,10 @@
 
 #include "ATen/Tensor.h"
 #include "ATen/TensorImpl.h"
-#include "ATen/Error.h"
+#include "ATen/core/Error.h"
 
 namespace at {
-struct SparseTensorImpl : public TensorImpl {
+struct AT_API SparseTensorImpl : public TensorImpl {
   // Stored in COO format, indices + values.
 
   // Ideal INVARIANTS:
@@ -57,11 +57,10 @@ public:
   Tensor indices() const { return indices_; }
   Tensor values() const { return values_; }
 
-  const char * toString() const override;
   IntList sizes() const override;
   IntList strides() const override;
   int64_t dim() const override;
-  Scalar localScalar() override;
+  TensorImpl* maybe_zero_dim(bool condition_when_zero_dim) override;
   void * unsafeGetTH(bool retain) override;
   std::unique_ptr<Storage> storage() override;
 
@@ -76,7 +75,7 @@ public:
     if (size.size() == 0) {
       size_ = {0};
     } else {
-      size_ = size;
+      size_ = size.vec();
     }
     sparseDims_ = sparseDims;
     denseDims_ = denseDims;

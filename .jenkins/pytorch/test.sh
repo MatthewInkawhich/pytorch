@@ -20,8 +20,18 @@ popd
 # if you're not careful.  Check this if you made some changes and the
 # ASAN test is not working
 if [[ "$BUILD_ENVIRONMENT" == *asan* ]]; then
-    export ASAN_OPTIONS=detect_leaks=0:symbolize=1
-    export UBSAN_OPTIONS=print_stacktrace=1
+    export ASAN_OPTIONS=detect_leaks=0:symbolize=1:strict_init_order=true
+    # We suppress the vptr volation, since we have separate copies of
+    # libprotobuf in both libtorch.so and libcaffe2.so, and it causes
+    # the following problem:
+    #    test_cse (__main__.TestJit) ... torch/csrc/jit/export.cpp:622:38:
+    #        runtime error: member call on address ... which does not point
+    #        to an object of type 'google::protobuf::MessageLite'
+    #        ...: note: object is of type 'onnx_torch::ModelProto'
+    #
+    # This problem should be solved when libtorch.so and libcaffe2.so are
+    # merged.
+    export UBSAN_OPTIONS=print_stacktrace=1:suppressions=$PWD/ubsan.supp
     export PYTORCH_TEST_WITH_ASAN=1
     export PYTORCH_TEST_WITH_UBSAN=1
     # TODO: Figure out how to avoid hard-coding these paths
@@ -44,13 +54,14 @@ if [[ "$BUILD_ENVIRONMENT" == *asan* ]]; then
     (cd test && ! get_exit_code python -c "import torch; torch._C._crash_if_aten_asan(3)")
 fi
 
-export ATEN_DISABLE_AVX=
-export ATEN_DISABLE_AVX2=
-if [[ "${JOB_BASE_NAME}" == *-NO_AVX-* ]]; then
-  export ATEN_DISABLE_AVX=1
+if [[ "$BUILD_ENVIRONMENT" == *rocm* ]]; then
+  export PYTORCH_TEST_WITH_ROCM=1
 fi
-if [[ "${JOB_BASE_NAME}" == *-NO_AVX2-* ]]; then
-  export ATEN_DISABLE_AVX2=1
+
+if [[ "${JOB_BASE_NAME}" == *-NO_AVX-* ]]; then
+  export ATEN_CPU_CAPABILITY=default
+elif [[ "${JOB_BASE_NAME}" == *-NO_AVX2-* ]]; then
+  export ATEN_CPU_CAPABILITY=avx
 fi
 
 test_python_nn() {
@@ -99,12 +110,12 @@ test_libtorch() {
      echo "Testing libtorch"
      CPP_BUILD="$PWD/../cpp-build"
      if [[ "$BUILD_ENVIRONMENT" == *cuda* ]]; then
-       "$CPP_BUILD"/libtorch/bin/test_jit
+       "$CPP_BUILD"/caffe2/bin/test_jit
      else
-       "$CPP_BUILD"/libtorch/bin/test_jit "[cpu]"
+       "$CPP_BUILD"/caffe2/bin/test_jit "[cpu]"
      fi
      python tools/download_mnist.py --quiet -d test/cpp/api/mnist
-     OMP_NUM_THREADS=2 "$CPP_BUILD"/libtorch/bin/test_api
+     OMP_NUM_THREADS=2 "$CPP_BUILD"/caffe2/bin/test_api
   fi
 }
 
